@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>MP FIR Downloader</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* Overlay for Login */
+        #login-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .login-box {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            width: 350px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Login Overlay -->
+    <div id="login-overlay">
+        <div class="login-box">
+            <h4 class="text-center mb-3">Login to MP Police</h4>
+
+            <!-- Step 1: Name & Phone -->
+            <div id="step-send">
+                <div class="mb-3">
+                    <label>Name</label>
+                    <input type="text" id="loginName" class="form-control" placeholder="Enter Name">
+                </div>
+                <div class="mb-3">
+                    <label>Mobile Number</label>
+                    <input type="text" id="loginMobile" class="form-control" placeholder="Enter Mobile">
+                </div>
+                <button id="btnSendOtp" class="btn btn-primary w-100">Send OTP</button>
+            </div>
+
+            <!-- Step 2: OTP -->
+            <div id="step-verify" style="display:none;">
+                <div class="alert alert-info py-1">OTP Sent!</div>
+
+                <div class="mb-3">
+                    <label>Enter OTP</label>
+                    <input type="text" id="loginOtp" class="form-control" placeholder="Enter OTP">
+                </div>
+
+                <button id="btnVerifyOtp" class="btn btn-success w-100 mb-2">
+                    Verify & Login
+                </button>
+
+                <button id="btnResendOtp" class="btn btn-outline-primary w-100">
+                    Resend OTP
+                </button>
+            </div>
+
+
+            <div id="login-msg" class="text-danger mt-2 text-center"></div>
+        </div>
+    </div>
+
+    <div class="container py-4" id="app" style="filter: blur(5px);">
+        <h2 class="text-center">📁 MP FIR Downloader</h2>
+
+        <form id="downloadForm">
+            <div class="row mb-2">
+                <div class="col">
+                    <label class="form-label">From Date</label>
+                    <input type="date" name="fromDate" required class="form-control">
+                </div>
+                <div class="col">
+                    <label class="form-label">To Date</label>
+                    <input type="date" name="toDate" required class="form-control">
+                </div>
+            </div>
+            <input type="text" name="requestName" required class="form-control mb-2"
+                placeholder="Request Name (Folder)">
+
+            <label class="form-label d-flex justify-content-between align-items-center">
+                Select Districts (Login to load)
+                <button type="button" id="selectAllDistricts" class="btn btn-sm btn-link p-0 text-decoration-none"
+                    style="display:none;">Select All</button>
+            </label>
+            <div id="district-container" class="border rounded p-2 mb-3"
+                style="max-height: 250px; overflow-y: auto; background: #fff; display:none;">
+                <!-- Checkboxes loaded after login -->
+                <div class="text-muted small p-2 text-center">Loading districts...</div>
+            </div>
+
+            <!-- STATIONS SELECTION -->
+            <label class="form-label">
+                Select Police Stations (Auto-load on District select)
+            </label>
+            <div id="station-container" class="border rounded p-2 mb-3 bg-light"
+                style="max-height: 300px; overflow-y: auto; display:none;">
+                <div class="text-muted small p-2 text-center">Select a district to load stations...</div>
+            </div>
+
+            <button class="btn btn-primary w-100">Search FIRs</button>
+        </form>
+
+        <div id="fir-results" class="mt-4">
+            <!-- generic table checks -->
+        </div>
+
+        <div id="status-log" class="mt-3"></div>
+
+        <!-- LOG CONSOLE -->
+        <div class="card mt-3">
+            <div class="card-header bg-dark text-white py-1">
+                <small>📝 Operation Log</small>
+            </div>
+            <div class="card-body p-0">
+                <div id="console-log" class="bg-light p-2 font-monospace small"
+                    style="height: 150px; overflow-y: auto; color: #333; border: 1px solid #ddd;">
+                    <div class="text-muted">> Ready.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- File Tree Section -->
+        <!-- <div class="mt-4">
+            <button class="btn btn-outline-secondary w-100 text-start" type="button" data-bs-toggle="collapse"
+                data-bs-target="#fileTreeCollapse" aria-expanded="false" aria-controls="fileTreeCollapse">
+                📂 Downloaded Files (Click to Toggle)
+            </button>
+            <div class="collapse show" id="fileTreeCollapse">
+                <div class="card card-body mt-2" style="max-height: 300px; overflow-y: auto;">
+                    <div id="file-tree" class="small">Loading files...</div>
+                </div>
+            </div>
+        </div> -->
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/main.js"></script>
+</body>
+
+</html>
