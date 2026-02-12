@@ -22,4 +22,17 @@ export async function checkConnection() {
     }
 }
 
+export async function resetProcessingRequests() {
+    try {
+        const [result] = await pool.execute(
+            "UPDATE requests SET status='stopped' WHERE status='processing'"
+        );
+        if (result.changedRows > 0) {
+            console.log(`🛑 Reset ${result.changedRows} pending requests to 'stopped' state.`);
+        }
+    } catch (error) {
+        console.error('❌ Failed to reset processing requests:', error.message);
+    }
+}
+
 export default pool;

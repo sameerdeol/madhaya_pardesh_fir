@@ -1,5 +1,5 @@
-const originalSendText = document.getElementById('btnSendOtp').innerHTML;
-const originalVerifyText = document.getElementById('btnVerifyOtp').innerHTML;
+const originalSendText = 'Send OTP';
+const originalVerifyText = 'Verify & Login';
 
 // -------------------- LOGGER --------------------
 function logToConsole(msg, type = 'info') {
@@ -13,6 +13,48 @@ function logToConsole(msg, type = 'info') {
   el.appendChild(div);
   el.scrollTop = el.scrollHeight;
 }
+
+// -------------------- SYSTEM STATUS --------------------
+let isSystemReady = false;
+
+async function monitorSystemStatus() {
+  const btn = document.getElementById('btnSendOtp');
+  // Only affect button if we are in the send step
+  if (document.getElementById('step-send').style.display === 'none') return;
+
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+
+    if (data.ready) {
+      if (!isSystemReady) {
+        isSystemReady = true;
+        btn.disabled = false;
+        btn.innerHTML = originalSendText;
+        logToConsole('System Ready. Please login.', 'success');
+      }
+    } else {
+      isSystemReady = false;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading System...';
+    }
+  } catch (e) {
+    // 🛑 Handle Server Offline / Connection Refused
+    console.error('Status check failed:', e);
+    isSystemReady = false;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-grow spinner-grow-sm text-danger"></span> System Offline';
+  }
+}
+
+// Check status every 2 seconds until ready
+const statusInterval = setInterval(async () => {
+  await monitorSystemStatus();
+  if (isSystemReady) clearInterval(statusInterval);
+}, 2000);
+
+// Initial check
+monitorSystemStatus();
 
 document.getElementById('btnSendOtp').onclick = async () => {
   const btn = document.getElementById('btnSendOtp');
@@ -80,6 +122,36 @@ document.getElementById('btnVerifyOtp').onclick = async () => {
   } finally {
     btn.disabled = false;
     btn.innerHTML = originalVerifyText;
+  }
+};
+
+document.getElementById('btnResendOtp').onclick = async () => {
+  const btn = document.getElementById('btnResendOtp');
+  const originalText = btn.innerHTML;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Resending...';
+  logToConsole('Resending OTP...');
+
+  try {
+    const res = await fetch('/api/resend-otp', {
+      method: 'POST'
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      logToConsole('OTP Resend Success!', 'success');
+      alert('OTP has been resent');
+    } else {
+      logToConsole(`Failed to resend OTP: ${data.error}`, 'error');
+      alert('Failed to resend OTP');
+    }
+  } catch (e) {
+    logToConsole(`Error resending OTP: ${e.message}`, 'error');
+    alert('Error resending OTP');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalText;
   }
 };
 
@@ -250,6 +322,8 @@ document.getElementById('downloadForm').addEventListener('submit', async e => {
   const toDate = e.target.toDate.value;
   const requestName = e.target.requestName.value;
 
+  window.isPausedManually = false; // Reset flag
+
   if (fromDate > toDate) {
     alert('Start Date cannot be after End Date');
     return;
@@ -294,7 +368,9 @@ document.getElementById('downloadForm').addEventListener('submit', async e => {
         handleServerEvent(event, data);
       }
     }
-    statusLog.innerHTML = `<div class="alert alert-success">Process Completed.</div>`;
+    if (!window.isPausedManually) {
+      statusLog.innerHTML = `<div class="alert alert-success">Process Completed.</div>`;
+    }
   } catch (e) {
     console.error('Stream Error:', e);
     statusLog.innerHTML = `<div class="alert alert-danger">Stream Error: ${e.message}</div>`;
@@ -303,22 +379,42 @@ document.getElementById('downloadForm').addEventListener('submit', async e => {
 });
 
 function handleServerEvent(event, data) {
+  const statusLog = document.getElementById('status-log');
   switch (event) {
     case 'log':
       logToConsole(data.msg, data.type);
+      break;
+    case 'paused':
+      window.isPausedManually = true;
+      statusLog.innerHTML = `<div class="alert alert-warning">Process Paused.</div>`;
+      logToConsole(`⏸️ Request ${data.requestId} paused by user.`, 'warning');
+      loadRequests();
       break;
     case 'fir_found':
       addFirRow(data);
       break;
     case 'fir_status':
       updateFirStatus(data.firNo, data.status, data.path || data.error);
+      if (data.downloaded && data.total) {
+        // You could add a helper to update the local progress bar immediately here
+        // but loadRequests is usually fast enough if triggered by event.
+      }
+      loadRequests(); // Refresh progress
       break;
     case 'complete':
-      logToConsole(`✅ Search finished. Found: ${data.total}, DL: ${data.downloaded}`, 'success');
+      if (!window.isPausedManually) {
+        logToConsole(`✅ Search process finished naturally.`, 'success');
+        statusLog.innerHTML = `<div class="alert alert-success">Process Completed.</div>`;
+      } else {
+        logToConsole(`⚠️ Search process stopped by user.`, 'warning');
+      }
       refreshFileTree();
+      loadRequests();
       break;
     case 'error':
       logToConsole(`❌ Server Error: ${data.msg}`, 'error');
+      statusLog.innerHTML = `<div class="alert alert-danger">Error: ${data.msg}</div>`;
+      loadRequests();
       break;
   }
 }
@@ -342,8 +438,15 @@ function initResultsTable() {
 
 function addFirRow(fir) {
   const tbody = document.querySelector('#results-table tbody');
+  // Make ID unique per station + FIR to avoid conflicts if same FIR is in multiple stations
+  const safeStation = (fir.station_name || 'unknown').replace(/[^a-zA-Z0-9]/g, '_');
+  const safeFir = fir.firNo.replace(/[^a-zA-Z0-9]/g, '_');
+  const rowId = `fir-row-${safeFir}-${safeStation}`;
+
+  if (document.getElementById(rowId)) return; // Prevent duplicates
+
   const tr = document.createElement('tr');
-  tr.id = `fir-row-${fir.firNo.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  tr.id = rowId;
   tr.innerHTML = `
     <td class="fw-bold">${fir.firNo}</td>
     <td>${fir.firDate}</td>
@@ -357,18 +460,26 @@ function addFirRow(fir) {
 }
 
 function updateFirStatus(firNo, status, extra) {
-  const rowId = `fir-row-${firNo.replace(/[^a-zA-Z0-9]/g, '_')}`;
-  const row = document.getElementById(rowId);
-  if (!row) return;
+  // We need to find the row. Since we changed ID to include station, 
+  // we might need to search or update the backend to send station info in 'fir_status'.
+  // However, simpler fix for now: query by FIR NO part of ID if possible, 
+  // OR just update ALL rows with that FIR NO (if same FIR exists in multiple stations).
 
-  const statusCell = row.querySelector('.status-cell');
-  if (status === 'downloaded') {
-    statusCell.innerHTML = `<span class="badge bg-success">Downloaded</span>`;
-  } else if (status === 'failed') {
-    statusCell.innerHTML = `<span class="badge bg-danger" title="${extra || ''}">Failed</span>`;
-  } else if (status === 'no_token') {
-    statusCell.innerHTML = `<span class="badge bg-warning">No PDF</span>`;
-  }
+  const safeFir = firNo.replace(/[^a-zA-Z0-9]/g, '_');
+  const rows = document.querySelectorAll(`[id^="fir-row-${safeFir}-"]`);
+
+  rows.forEach(row => {
+    const statusCell = row.querySelector('.status-cell');
+    if (status === 'downloading') {
+      statusCell.innerHTML = `<span class="badge bg-info text-dark spinner-border spinner-border-sm"></span> <span class="badge bg-info text-dark">Downloading...</span>`;
+    } else if (status === 'downloaded') {
+      statusCell.innerHTML = `<span class="badge bg-success">Downloaded</span>`;
+    } else if (status === 'failed') {
+      statusCell.innerHTML = `<span class="badge bg-danger" title="${extra || ''}">Failed</span>`;
+    } else if (status === 'no_token') {
+      statusCell.innerHTML = `<span class="badge bg-warning">No PDF</span>`;
+    }
+  });
 }
 
 function renderTable(firs, requestName) {
@@ -380,7 +491,7 @@ function renderTable(firs, requestName) {
 
 window.downloadFIR = async (dataStr, btn) => {
   const firData = JSON.parse(decodeURIComponent(dataStr));
-  logToConsole(`Downloading FIR ${firData.firNo} from ${firData.station_name || 'station'}...`);
+  logToConsole(`Downloading FIR ${firData.firNo} from ${firData.station_name || 'station'}. Please wait 40-60s...`);
 
   const btnRow = btn.closest('tr');
   const statusCell = btnRow.querySelector('td:last-child');
@@ -459,6 +570,121 @@ window.toggleFolder = (id) => {
   const el = document.getElementById(id);
   if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 };
+
+// -------------------- REQUEST MANAGEMENT --------------------
+
+async function loadRequests() {
+  const tbody = document.getElementById('requests-body');
+  try {
+    const res = await fetch('/api/requests');
+    const requests = await res.json();
+
+    if (requests.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No requests found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = '';
+    requests.forEach(req => {
+      const tr = document.createElement('tr');
+      const progress = req.total_firs > 0 ? Math.round((req.downloaded_firs / req.total_firs) * 100) : 0;
+
+      let statusBadge = `<span class="badge bg-secondary">${req.status}</span>`;
+      if (req.status === 'processing') statusBadge = `<span class="badge bg-primary spinner-grow spinner-grow-sm" role="status"></span> <span class="badge bg-primary">Processing</span>`;
+      if (req.status === 'completed') statusBadge = `<span class="badge bg-success">Completed</span>`;
+      if (req.status === 'stopped') statusBadge = `<span class="badge bg-warning text-dark">Stopped</span>`;
+
+      let actions = '';
+      if (req.status === 'processing') {
+        actions = `<button class="btn btn-sm btn-danger" onclick="stopRequest(${req.id})">Stop</button>`;
+      } else if (req.status === 'stopped' || req.status === 'failed') {
+        actions = `<button class="btn btn-sm btn-success" onclick="resumeRequest(${req.id})">Resume</button>`;
+      }
+
+      tr.innerHTML = `
+        <td><strong>${req.request_name}</strong></td>
+        <td>${statusBadge}</td>
+        <td>
+          <div class="progress" style="height: 20px;">
+            <div class="progress-bar ${req.status === 'completed' ? 'bg-success' : ''}" 
+                 role="progressbar" style="width: ${progress}%">${req.downloaded_firs} PDFs</div>
+          </div>
+        </td>
+        <td><small>${new Date(req.created_at).toLocaleString()}</small></td>
+        <td>${actions}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (e) {
+    console.error('Failed to load requests:', e);
+  }
+}
+
+async function stopRequest(id) {
+  if (!confirm('Are you sure you want to stop this request?')) return;
+  try {
+    const res = await fetch('/api/stop-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+    const data = await res.json();
+    if (data.success) {
+      logToConsole(`Request ${id} stopped.`, 'warning');
+      loadRequests();
+    }
+  } catch (e) {
+    alert('Failed to stop request');
+  }
+}
+
+async function resumeRequest(id) {
+  window.isPausedManually = false; // Reset flag
+  logToConsole(`Resuming Request ${id}...`);
+  const statusLog = document.getElementById('status-log');
+  statusLog.innerHTML = `<div class="alert alert-info">Resuming and Downloading...</div>`;
+  initResultsTable();
+
+  try {
+    const response = await fetch('/api/resume-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const [eventPart, dataPart] = line.split('\n');
+        const event = eventPart.replace('event: ', '').trim();
+        const data = JSON.parse(dataPart.replace('data: ', '').trim());
+        handleServerEvent(event, data);
+      }
+    }
+  } catch (e) {
+    logToConsole(`Resume Error: ${e.message}`, 'error');
+  }
+}
+
+// Attach to window for onclick
+window.loadRequests = loadRequests;
+window.stopRequest = stopRequest;
+window.resumeRequest = resumeRequest;
+
+// Initial load and periodic refresh
+loadRequests();
+setInterval(loadRequests, 5000);
 
 // Initial tree load
 refreshFileTree();

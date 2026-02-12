@@ -44,8 +44,13 @@
                 <div class="mb-3">
                     <label>Mobile Number</label>
                     <input type="text" id="loginMobile" class="form-control" placeholder="Enter Mobile">
+                    <small class="text-muted d-block mt-1">
+                        Note: It will take 40-50 sec or 1 mnt to load the page/PDF. Please wait.
+                    </small>
                 </div>
-                <button id="btnSendOtp" class="btn btn-primary w-100">Send OTP</button>
+                <button id="btnSendOtp" class="btn btn-primary w-100" disabled>
+                    <span class="spinner-border spinner-border-sm"></span> Loading System...
+                </button>
             </div>
 
             <!-- Step 2: OTP -->
@@ -127,6 +132,32 @@
                     style="height: 150px; overflow-y: auto; color: #333; border: 1px solid #ddd;">
                     <div class="text-muted">> Ready.</div>
                 </div>
+            </div>
+        </div>
+
+        <!-- REQUESTS MANAGEMENT -->
+        <div class="card mt-4">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">📊 Download Requests</h5>
+                <button class="btn btn-sm btn-light" onclick="loadRequests()">Refresh</button>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0" id="requests-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Progress</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="requests-body">
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-3">No requests found.</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 

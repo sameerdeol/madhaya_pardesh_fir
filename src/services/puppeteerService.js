@@ -15,14 +15,29 @@ export async function initBrowser() {
     }
 
     initializing = true;
-    process.stdout.write('➡️ Launching background browser (visible mode)...\n');
+    process.stdout.write('➡️ Launching background browser (HEADLESS mode)...\n');
 
     browser = await puppeteer.launch({
-        headless: false, // 🔴 BACKGROUND MODE
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        headless: true, // 🟢 VISIBLE MODE (for debugging)
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding'
+        ]
     });
 
     page = await browser.newPage();
+
+    // 🛑 FORCE CLEAR EVERYTHING to ensure fresh login
+    const client = await page.target().createCDPSession();
+    await client.send('Network.clearBrowserCookies');
+    await client.send('Network.clearBrowserCache');
+    await client.send('Storage.clearDataForOrigin', {
+        origin: 'https://citizen.mppolice.gov.in',
+        storageTypes: 'all',
+    });
 
     await page.setUserAgent(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
@@ -47,13 +62,26 @@ export async function initBrowser() {
 
     // -------------------- INITIAL FLOW --------------------
     process.stdout.write('➡️ Navigating to homepage...\n');
-    try {
-        await page.goto('https://citizen.mppolice.gov.in/', {
-            waitUntil: 'domcontentloaded', // Relaxed
-            timeout: 60000
-        });
-    } catch (e) {
-        process.stdout.write(`⚠️ Initial navigation timeout/error: ${e.message}\n`);
+
+    const maxNavRetries = 3;
+    for (let i = 0; i < maxNavRetries; i++) {
+        try {
+            console.log(`🌐 Navigation Attempt ${i + 1}/${maxNavRetries}...`);
+            await page.goto('https://citizen.mppolice.gov.in/', {
+                waitUntil: 'domcontentloaded',
+                timeout: 90000 // Increased timeout
+            });
+            console.log('✅ Homepage reached.');
+            break; // Success
+        } catch (e) {
+            console.warn(`⚠️ Navigation Attempt ${i + 1} failed: ${e.message}`);
+            if (i === maxNavRetries - 1) {
+                const msg = "Source Website Not Responding, please try after some time";
+                process.stdout.write(`❌ FATAL: ${msg}\n`);
+                throw new Error(msg); // Rethrow to fail initialization
+            }
+            await new Promise(r => setTimeout(r, 5000)); // Wait before retry
+        }
     }
 
     // Switch to English
@@ -76,13 +104,19 @@ export async function initBrowser() {
 
     // Click FIR View
     process.stdout.write('➡️ Opening FIR View modal...\n');
+    // Click FIR View
+    process.stdout.write('➡️ Opening FIR View modal...\n');
     try {
-        await page.waitForSelector('a[data-target="#FirViewModel_New"]', { visible: true, timeout: 20000 });
+        await page.waitForSelector('a[data-target="#FirViewModel_New"]', { timeout: 30000 });
+
+        // Ensure successful click
         await page.evaluate(() => {
-            document.querySelector('a[data-target="#FirViewModel_New"]').click();
+            const btn = document.querySelector('a[data-target="#FirViewModel_New"]');
+            if (btn) btn.click();
         });
 
-        await page.waitForSelector('#FirViewModel_New', { visible: true, timeout: 10000 });
+        // Wait for modal transition
+        await page.waitForSelector('#FirViewModel_New', { timeout: 60000 });
 
         // Click YES
         process.stdout.write('➡️ Clicking YES button...\n');
@@ -98,7 +132,6 @@ export async function initBrowser() {
         // Wait for FIR page
         process.stdout.write('➡️ Waiting for FIR View page load...\n');
         await page.waitForSelector('#ContentPlaceHolder1_txtMobileNo', {
-            visible: true,
             timeout: 60000
         });
 
@@ -124,10 +157,26 @@ export function getBrowser() {
 }
 
 export function isBrowserReady() {
-    return (
+    const readyState = (
         isReady &&
         browser &&
         page &&
         !page.isClosed()
     );
+    // Debug log if false but we think we should be ready (optional, maybe too noisy for polling)
+    if (!readyState && isReady) {
+        // console.log(`DEBUG: isReady=${isReady}, browser=${!!browser}, page=${!!page}, closed=${page?.isClosed()}`);
+    }
+    return readyState;
+}
+
+export async function closeBrowser() {
+    if (browser) {
+        process.stdout.write('🛑 Closing browser instance...\n');
+        await browser.close();
+        browser = null;
+        page = null;
+        isReady = false;
+        process.stdout.write('✅ Browser closed.\n');
+    }
 }

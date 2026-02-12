@@ -1,5 +1,30 @@
 import { getPage, isBrowserReady, initBrowser } from '../services/puppeteerService.js';
 
+export async function checkStatus(req, res) {
+    const ready = isBrowserReady();
+    let isLoggedIn = false;
+
+    if (ready) {
+        try {
+            const page = getPage();
+            // Check if we are on the search page (logged in)
+            isLoggedIn = page.url().includes('FirSearch.aspx');
+        } catch (e) {
+            console.error('Status Check Error (ignoring):', e.message);
+            isLoggedIn = false;
+        }
+    }
+
+    console.log(`DEBUG CheckStatus: ready=${ready}, isLoggedIn=${isLoggedIn}`);
+
+    res.json({
+        ready,
+        isLoggedIn,
+        // Debug info
+        status: ready ? (isLoggedIn ? 'logged_in' : 'ready_for_otp') : 'initializing'
+    });
+}
+
 // -------------------- SEND OTP --------------------
 export async function sendOtp(req, res) {
     const { mobile } = req.body;
@@ -45,10 +70,18 @@ export async function sendOtp(req, res) {
             // Check if we are already on a page with the login input
             const hasInput = await page.evaluate(() => !!document.querySelector('#ContentPlaceHolder1_txtMobileNo'));
 
+            // 🛑 PREVENT RELOAD IF ALREADY LOGGED IN
+            const isAlreadyLoggedIn = page.url().includes('FirSearch.aspx');
+
+            if (isAlreadyLoggedIn) {
+                console.log('✅ Already on FIR Search page. Skipping login.');
+                return res.json({ success: true });
+            }
+
             if (!hasInput && !page.url().includes('Login.aspx') && !page.url().includes('FirView.aspx')) {
                 console.log('Navigating to login page...');
                 await page.goto('https://citizen.mppolice.gov.in/Login.aspx', {
-                    waitUntil: 'networkidle2',
+                    waitUntil: 'domcontentloaded',
                     timeout: 60000
                 });
             }
@@ -114,24 +147,71 @@ export async function verifyOtp(req, res) {
     try {
         console.log('Submitting OTP...');
 
-        // Fill OTP field
+        await page.waitForSelector('#ContentPlaceHolder1_txtOtp', { timeout: 10000 });
+
+        // Fill OTP field with proper events
         await page.evaluate((otp) => {
-            document.querySelector('#ContentPlaceHolder1_txtOtp').value = otp;
+            const input = document.querySelector('#ContentPlaceHolder1_txtOtp');
+            if (input) {
+                input.focus();
+                input.value = otp;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                input.blur();
+            }
         }, otp);
 
-        // Click OK via DOM
+        // Click Submit
         await page.evaluate(() => {
             const btn = document.getElementById('ContentPlaceHolder1_btnSubmitOTP');
             if (btn) btn.click();
         });
 
-        // 🔥 WAIT FOR FirSearch.aspx RESPONSE (NOT navigation)
-        await page.waitForResponse(
-            r =>
-                r.url().includes('FirSearch.aspx') &&
-                r.request().resourceType() === 'document',
-            { timeout: 30000 }
-        );
+        // 🟢 PREFERRED: Wait for URL Change (Robust)
+        const startTime = Date.now();
+        const maxWait = 45000;
+
+        while (Date.now() - startTime < maxWait) {
+
+            // 1. Success Check: URL changed to Search Page
+            if (page.url().includes('FirSearch.aspx')) {
+                console.log('✅ OTP Verified. Navigated to Search Page.');
+                return res.json({ success: true });
+            }
+
+            // 2. Error Check: Error Message in DOM
+            let errorMsg = null;
+            try {
+                errorMsg = await page.evaluate(() => {
+                    const lbl = document.getElementById('ContentPlaceHolder1_lblMsg');
+                    if (lbl && lbl.innerText && (lbl.innerText.includes('Incorrect') || lbl.innerText.includes('Invalid'))) {
+                        return lbl.innerText;
+                    }
+                    const bodyText = document.body.innerText;
+                    if (bodyText.includes('Incorrect OTP') || bodyText.includes('Invalid OTP')) {
+                        return 'Incorrect OTP or Invalid OTP detected in page body';
+                    }
+                    return null;
+                });
+            } catch (e) {
+                // Ignore context destruction (happens during successful navigation)
+                if (e.message.includes('Execution context was destroyed')) {
+                    console.log('Context destroyed (Navigation in progress)...');
+                    // wait a bit and continue loop to let URL check pass next time
+                    await new Promise(r => setTimeout(r, 1000));
+                    continue;
+                }
+                throw e; // Other errors should be thrown
+            }
+
+            if (errorMsg) {
+                throw new Error(errorMsg);
+            }
+
+            await new Promise(r => setTimeout(r, 1000));
+        }
+
+        throw new Error('Verify Timeout: No navigation or error message appeared.');
 
         res.json({ success: true });
 
